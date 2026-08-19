@@ -10,6 +10,8 @@ import java.util.Objects;
 public class DecodecTools {
   private static ArrayList<String> hevcDecodecList = null;
   private static ArrayList<String> avcDecodecList = null;
+  private static ArrayList<String> vp8DecodecList = null;
+  private static ArrayList<String> vp9DecodecList = null;
   private static ArrayList<String> opusDecodecList = null;
   private static Boolean isSupportOpus = null;
   private static Boolean isSupportH265 = null;
@@ -30,6 +32,8 @@ public class DecodecTools {
             if (!codecName.startsWith("OMX.google") && !codecName.startsWith("c2.android")) {
               if (Objects.equals(supportType, MediaFormat.MIMETYPE_VIDEO_HEVC)) hevcDecodecList.add(codecName);
               else if (Objects.equals(supportType, MediaFormat.MIMETYPE_VIDEO_AVC)) avcDecodecList.add(codecName);
+              else if (Objects.equals(supportType, MediaFormat.MIMETYPE_VIDEO_VP8)) vp8DecodecList.add(codecName);
+              else if (Objects.equals(supportType, MediaFormat.MIMETYPE_VIDEO_VP9)) vp9DecodecList.add(codecName);
             }
           }
         }
@@ -52,10 +56,26 @@ public class DecodecTools {
     return isSupportH265;
   }
 
-  // 获取视频最优解码器
-  public static String getVideoDecoder(boolean h265) {
-    if (hevcDecodecList == null || avcDecodecList == null) getDecodecList();
-    ArrayList<String> allHardNormalDecodec = h265 ? hevcDecodecList : avcDecodecList;
+  public static boolean isSupportVP8() {
+    if (vp8DecodecList == null) getDecodecList();
+    return vp8DecodecList.size() > 0;
+  }
+
+  public static boolean isSupportVP9() {
+    if (vp9DecodecList == null) getDecodecList();
+    return vp9DecodecList.size() > 0;
+  }
+
+  // 获取视频最优解码器（codecTypeId: 0=H264 1=H265 2=VP8 3=VP9）
+  public static String getVideoDecoder(int codecTypeId) {
+    if (hevcDecodecList == null || avcDecodecList == null || vp8DecodecList == null || vp9DecodecList == null) getDecodecList();
+    ArrayList<String> allHardNormalDecodec;
+    switch (codecTypeId) {
+      case 1: allHardNormalDecodec = hevcDecodecList; break;
+      case 2: allHardNormalDecodec = vp8DecodecList; break;
+      case 3: allHardNormalDecodec = vp9DecodecList; break;
+      default: allHardNormalDecodec = avcDecodecList; break;
+    }
     ArrayList<String> allHardLowLatencyDecodec = new ArrayList<>();
     for (String codecName : allHardNormalDecodec) if (codecName.contains("low_latency")) allHardLowLatencyDecodec.add(codecName);
     // 存在低延迟解码器

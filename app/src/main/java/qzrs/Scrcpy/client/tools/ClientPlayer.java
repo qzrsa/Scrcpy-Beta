@@ -84,12 +84,22 @@ public class ClientPlayer {
   private void videoStreamIn() {
     VideoDecode videoDecode = null;
     try {
-      boolean useH265 = clientStream.readByteFromVideo() == 1;
+      // 协商编码类型：0=H264 1=H265 2=VP8 3=VP9（与服务端 VideoEncode.init 发出的枚举一致）
+      int codecTypeId = clientStream.readByteFromVideo();
       Pair<Integer, Integer> videoSize = new Pair<>(clientStream.readIntFromVideo(), clientStream.readIntFromVideo());
       Surface surface = new Surface(clientController.getTextureView().getSurfaceTexture());
-      ByteBuffer csd0 = clientStream.readFrameFromVideo();
-      ByteBuffer csd1 = useH265 ? null : clientStream.readFrameFromVideo();
-      videoDecode = new VideoDecode(videoSize, surface, csd0, csd1, playHandler, statsOverlay);
+      ByteBuffer csd0 = null;
+      ByteBuffer csd1 = null;
+      if (codecTypeId == 0) {
+        // H264：csd-0 + csd-1
+        csd0 = clientStream.readFrameFromVideo();
+        csd1 = clientStream.readFrameFromVideo();
+      } else if (codecTypeId == 1) {
+        // H265：仅 csd-0
+        csd0 = clientStream.readFrameFromVideo();
+      }
+      // VP8(2)/VP9(3)：无 csd，不读取
+      videoDecode = new VideoDecode(codecTypeId, videoSize, surface, csd0, csd1, playHandler, statsOverlay);
       while (!Thread.interrupted()) {
         ByteBuffer frame = clientStream.readFrameFromVideo();
         if (statsOverlay != null) statsOverlay.onVideoFrame(frame.remaining());

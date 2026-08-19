@@ -68,10 +68,10 @@ cd D:\WorkBuddy\Scrcpy Updete\repo\Scrcpy
 | 2 | 剪贴板跨版本稳定性加固 | ✅ 已完成 | 新增客户端主动拉取剪贴板命令（case 12）+ `getClipboardText/markClipboardSynced`，双向/初始同步更稳；`getText` 异常安全 |
 | 3 | 分辨率/编码器尺寸约束对齐 | ✅ 已完成 | `VideoEncode` 新增 `resolveCodecInfo/clampVideoSizeToEncoder/applyEncoderFallbackSize`：按编码器 `VideoCapabilities`（alignment + 支持宽高上界）对齐 videoSize，`configure` 失败再兜底重试；用 `MediaCodecList` 解析兼容 Android 9（不用 API29+ 的 `getCodecInfo()`）；发包顺序调整为对齐后发送 |
 | 4 | Android 15/16 (API 35/36) 适配加固 | ✅ 已完成 | 补全 lint 守卫：`SurfaceControl` 类级补 `BlockedPrivateApi`、`InputManager`/`DisplayManager` 补 `PrivateApi`、`FakeContext.getDeviceId()` 加 `@Override`（compileSdk 36 下 `Context.getDeviceId()` API31+ 已存在）；`ClipboardManager` 签名探测已覆盖 API34 全组合、API35/36 大概率沿用；`DisplayManager` 反射字段名稳定。**运行期反射路径（SurfaceControl 静态方法）需真机/模拟器在 API35/36 验证** |
-| 5 | VP8/VP9 编码兜底（4.1 头号特性） | ⬜ 待做 | 新增编解码器选择与协议协商 + 客户端解码 |
+| 5 | VP8/VP9 编码兜底（4.1 头号特性） | ✅ 已完成 | 协商字节扩展为枚举（0=H264/1=H265/2=VP8/3=VP9）；服务端优先 H265→H264，二者不可用兜底 VP9/VP8（`EncodecTools.isSupportVP8/9/AVC`）；**补全 csd 发送**（首帧前发 csd-0，AVC 另发 csd-1），修复此前服务端不发 csd 导致客户端读取错位的协议缺口，VP8/VP9 无 csd 自动跳过；客户端 `ClientPlayer` 按枚举选解码 mime、`VideoDecode` 按类型设 csd、`DecodecTools.getVideoDecoder(int)` 支持四codec。**注意**：此改动同时修正了 H264/H265 既有 csd 协议，且 app 需内置 server 二进制（`app/src/main/res/raw/scrcpy_server`） |
 
 ## 七、下一步
 
 1. **（可选）真机/模拟器验证**：把 `server-release-unsigned.apk` 部署到安卓设备运行，确认编码器优选与协议握手在 Android 9–16 上正常（编译通过 ≠ 运行正确）。
-2. 按进度清单第 2 项继续：剪贴板跨版本稳定性加固。
+2. **v4.1 对齐 5 项已全部完成**（多指/剪贴板/尺寸约束/API35-36/VP8-VP9），下一步进入真机/模拟器运行验证（编译通过 ≠ 运行正确）。
 3. 后续改动继续提交并推送到 `qzrsa/Scrcpy-Beta`（复用 Git Data API 脚本）。

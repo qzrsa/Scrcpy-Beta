@@ -28,7 +28,11 @@ public final class VideoEncode {
   private static MediaCodec encedec;
   private static MediaFormat encodecFormat;
   public static boolean isHasChangeConfig = false;
-  private static boolean useH265;
+  // 协商编码类型：0=H264(AVC) 1=H265(HEVC) 2=VP8 3=VP9（对齐 scrcpy v4.1 的 VP8/VP9 兜底）
+  private static int codecTypeId;
+  private static String codecMime;
+  // csd 是否已在首帧前发出（仅首帧前发一次，避免运行时格式变化污染视频流）
+  private static boolean csdSent = false;
 
   private static IBinder display;
 
@@ -39,12 +43,29 @@ public final class VideoEncode {
   public static volatile long encodedFrameCount = 0;
 
   public static void init() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, IOException, ErrnoException {
-    useH265 = Options.supportH265 && EncodecTools.isSupportH265();
+    // 对齐 scrcpy v4.1：优先 H265（若支持），否则 H264；H264/H265 均不可用时兜底 VP9/VP8（几乎总是可用）
+    if (Options.supportH265 && EncodecTools.isSupportH265()) {
+      codecMime = MediaFormat.MIMETYPE_VIDEO_HEVC;
+      codecTypeId = 1;
+    } else if (EncodecTools.isSupportAVC()) {
+      codecMime = MediaFormat.MIMETYPE_VIDEO_AVC;
+      codecTypeId = 0;
+    } else if (EncodecTools.isSupportVP9()) {
+      codecMime = MediaFormat.MIMETYPE_VIDEO_VP9;
+      codecTypeId = 3;
+    } else if (EncodecTools.isSupportVP8()) {
+      codecMime = MediaFormat.MIMETYPE_VIDEO_VP8;
+      codecTypeId = 2;
+    } else {
+      // 终极兜底：即便设备异常也尝试 AVC
+      codecMime = MediaFormat.MIMETYPE_VIDEO_AVC;
+      codecTypeId = 0;
+    }
     // 创建Codec（内部按所选编码器的 VideoCapabilities 约束对齐 videoSize，v4.1 size-constraints 修复）
     createEncodecFormat();
-    // 发包：编码器类型 + 已对齐的视频尺寸（与客户端协商字节一致）
+    // 发包：协商编码类型枚举 + 已对齐的视频尺寸（与客户端一致）
     ByteBuffer byteBuffer = ByteBuffer.allocate(9);
-    byteBuffer.put((byte) (useH265 ? 1 : 0));
+    byteBuffer.put((byte) codecTypeId);
     byteBuffer.putInt(Device.videoSize.first);
     byteBuffer.putInt(Device.videoSize.second);
     byteBuffer.flip();
@@ -56,7 +77,6 @@ public final class VideoEncode {
   }
 
   private static void createEncodecFormat() throws IOException {
-    String codecMime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
     // 对齐 scrcpy v4.1：优先选用硬件编码器，避免部分机型默认编码器出绿屏/紫屏/卡顿；支持手动指定
     String encoderName = EncodecTools.selectEncoderName(codecMime, Options.videoEncoder);
     MediaCodecInfo codecInfo;
@@ -131,6 +151,11 @@ public final class VideoEncode {
       int outIndex;
       do {
         outIndex = encedec.dequeueOutputBuffer(bufferInfo, 1000);
+        if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+          // 输出格式变化（首帧前）：把编解码器特定数据(csd-0 / AVC 的 csd-1)作为视频帧发给客户端，
+          // 使协议自洽（此前服务端未发 csd，客户端读取错位）；VP8/VP9 通常无 csd，自然跳过
+          sendCodecSpecificData();
+        }
       } while (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || outIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED);
       if (outIndex < 0) return; // INFO_TRY_AGAIN_LATER：本轮无输出，直接返回由调用方循环重试
       encodedFrameCount++; // 统计：成功编码出一帧
@@ -139,6 +164,26 @@ public final class VideoEncode {
       ControlPacket.sendVideoEvent(bufferInfo.presentationTimeUs, buffer);
       encedec.releaseOutputBuffer(outIndex, false);
     } catch (IllegalStateException ignored) {
+    }
+  }
+
+  /**
+   * 输出格式变更时，把 csd（codec-specific data）发给客户端。
+   * 仅首帧前发一次：AVC 需 csd-0 + csd-1（SPS/PPS），HEVC 只需 csd-0（含 VPS/SPS/PPS），VP8/VP9 无 csd。
+   * 复用视频帧封装（sendVideoEvent），客户端以相同 readFrameFromVideo 读取并跳过 8 字节 pts。
+   */
+  private static void sendCodecSpecificData() {
+    if (csdSent) return;
+    try {
+      MediaFormat format = encedec.getOutputFormat();
+      ByteBuffer csd0 = format.getByteBuffer("csd-0");
+      if (csd0 != null) ControlPacket.sendVideoEvent(0, csd0);
+      if (codecTypeId == 0) { // 仅 AVC(H264) 需要 csd-1
+        ByteBuffer csd1 = format.getByteBuffer("csd-1");
+        if (csd1 != null) ControlPacket.sendVideoEvent(0, csd1);
+      }
+      csdSent = true;
+    } catch (Exception ignored) {
     }
   }
 
@@ -201,8 +246,7 @@ public final class VideoEncode {
   private static void clampVideoSizeToEncoder(MediaCodecInfo codecInfo) {
     if (codecInfo == null) return;
     try {
-      String mime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
-      MediaCodecInfo.VideoCapabilities vc = codecInfo.getCapabilitiesForType(mime).getVideoCapabilities();
+      MediaCodecInfo.VideoCapabilities vc = codecInfo.getCapabilitiesForType(codecMime).getVideoCapabilities();
       if (vc == null) return;
       int w = Device.videoSize.first;
       int h = Device.videoSize.second;
@@ -231,10 +275,9 @@ public final class VideoEncode {
    */
   private static void applyEncoderFallbackSize() {
     try {
-      String mime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
-      MediaCodecInfo codecInfo = resolveCodecInfo(encedec != null ? encedec.getName() : null, mime);
+      MediaCodecInfo codecInfo = resolveCodecInfo(encedec != null ? encedec.getName() : null, codecMime);
       if (codecInfo == null) return;
-      MediaCodecInfo.VideoCapabilities vc = codecInfo.getCapabilitiesForType(mime).getVideoCapabilities();
+      MediaCodecInfo.VideoCapabilities vc = codecInfo.getCapabilitiesForType(codecMime).getVideoCapabilities();
       if (vc == null) return;
       int maxW = vc.getSupportedWidths().getUpper();
       int maxH = vc.getSupportedHeights().getUpper();
