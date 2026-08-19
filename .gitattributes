@@ -1,0 +1,17 @@
+# 关键脚本：强制 LF 行尾（CRLF 会破坏 shebang，导致 Linux CI 上 gradlew 无法执行）
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Windows 批处理保持 CRLF
+gradlew.bat text eol=crlf
+*.bat text eol=crlf
+
+# 文本文件统一 LF（Java/Gradle/YAML/MD 均不受 CRLF 影响，统一规范化避免混用）
+*.java text eol=lf
+*.gradle text eol=lf
+*.properties text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.xml text eol=lf
+*.json text eol=lf
