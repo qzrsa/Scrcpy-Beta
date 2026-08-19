@@ -21,8 +21,12 @@ android {
 
   sourceSets {
     main {
-      // server 模块 copyRelease 生成的 res（内置 scrcpy_server.jar），避免写源码目录
-      res.srcDirs += file("${project(':server').buildDir}/generated/serverRes")
+      // server 模块 copyRelease 生成的 res（内置 scrcpy_server.jar → R.raw.scrcpy_server）。
+      // copyRelease 输出到 server/build/generated/serverRes/（res 根目录），
+      // 文件落在 serverRes/raw/scrcpy_server.jar，即 app 的 res/raw/scrcpy_server。
+      // 用固定相对路径（app 与 server 在两种仓库结构下均为同级目录，'../server/...' 通用），
+      // 避免跨工程 tasks.named() 在配置期查找任务失败；依赖由下方 tasks.matching 显式声明。
+      res.srcDir '../server/build/generated/serverRes'
     }
   }
 
@@ -87,12 +91,20 @@ android {
 }
 
 // Automatically build server before assembling the app
-// Gradle 8.9 严格校验：generate*Resources 读取 res/raw/scrcpy_server.jar（:server:copyRelease 的输出），
-// 必须显式声明依赖，否则报隐式依赖错误。matching+configureEach 惰性挂依赖，覆盖 debug/release。
-tasks.matching { it.name.startsWith("generate") && it.name.endsWith("Resources") }
-     .configureEach { it.dependsOn(':server:copyRelease') }
-tasks.matching { it.name.startsWith("assemble") && it.name.endsWith("Release") || it.name.startsWith("assemble") && it.name.endsWith("Debug") }
-     .configureEach { it.dependsOn(':server:copyRelease') }
+// Gradle 8.9 严格校验：app 在构建 release/debug 时会读取内置 server 资源
+// (res/raw/scrcpy_server.jar，由 :server:copyRelease 生成到 server/build/generated/serverRes)。
+// 必须以 :app 相关任务显式 dependsOn :server:copyRelease，否则 map*SourceSetPaths /
+// generate*Resources / process*Resources 报“隐式依赖”错误而构建失败。
+// configureEach 惰性匹配覆盖所有变体（debug/release）。
+def serverCopyRelease = ':server:copyRelease'
+tasks.matching {
+    it.name.startsWith('map') && it.name.endsWith('SourceSetPaths') ||
+    it.name.startsWith('generate') && it.name.endsWith('Resources') ||
+    it.name.startsWith('process') && it.name.endsWith('Resources') ||
+    it.name.startsWith('assemble')
+}.configureEach {
+    it.dependsOn(serverCopyRelease)
+}
 
 dependencies {
   implementation 'androidx.documentfile:documentfile:1.0.1'
