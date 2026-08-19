@@ -45,7 +45,9 @@ android {
 task copyRelease(type: Copy) {
     dependsOn 'assembleRelease'
     from file('build/outputs/apk/release/server-release-unsigned.apk')
-    into file('../app/src/main/res/raw/')
+    // 输出到 server 自身 build 生成目录（app 的 res.srcDirs 已引用该目录），
+    // 不要写 app 源码 res/，避免构建期修改源码导致 Gradle 输入快照冲突/隐式依赖校验失败
+    into file('build/generated/serverRes/raw/')
     rename('server-release-unsigned.apk', 'scrcpy_server.jar')
 }
 

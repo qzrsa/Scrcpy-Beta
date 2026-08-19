@@ -2,7 +2,12 @@ plugins {
   id 'com.android.application' version '8.7.2'
 }
 
-def keystorePropertiesFile = rootProject.file('../keystore.properties')
+// 自适应两种仓库结构：代码在仓库根(Scrcpy-Beta) 时 keystore.properties 在 gradle 根目录；
+// 代码在 Scrcpy/ 子目录(主仓库) 时在 gradle 根上一级
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+if (!keystorePropertiesFile.exists()) {
+    keystorePropertiesFile = rootProject.file('../keystore.properties')
+}
 def keystoreProperties = new Properties()
 def hasKeystore = false
 if (keystorePropertiesFile.exists()) {
@@ -13,6 +18,13 @@ if (keystorePropertiesFile.exists()) {
 android {
   namespace 'qzrs.Scrcpy'
   compileSdk 36
+
+  sourceSets {
+    main {
+      // server 模块 copyRelease 生成的 res（内置 scrcpy_server.jar），避免写源码目录
+      res.srcDirs += file("${project(':server').buildDir}/generated/serverRes")
+    }
+  }
 
   defaultConfig {
     applicationId "qzrs.Scrcpy"
@@ -75,16 +87,12 @@ android {
 }
 
 // Automatically build server before assembling the app
-project.afterEvaluate {
-  android.applicationVariants.all { variant ->
-    def variantName = variant.name.substring(0, 1).toUpperCase() + variant.name.substring(1)
-    def assembleTask = tasks.findByName("assemble${variantName}")
-    def serverCopyTask = project(':server').tasks.findByName("copyRelease")
-    if (assembleTask != null && serverCopyTask != null) {
-      assembleTask.dependsOn(serverCopyTask)
-    }
-  }
-}
+// Gradle 8.9 严格校验：generate*Resources 读取 res/raw/scrcpy_server.jar（:server:copyRelease 的输出），
+// 必须显式声明依赖，否则报隐式依赖错误。matching+configureEach 惰性挂依赖，覆盖 debug/release。
+tasks.matching { it.name.startsWith("generate") && it.name.endsWith("Resources") }
+     .configureEach { it.dependsOn(':server:copyRelease') }
+tasks.matching { it.name.startsWith("assemble") && it.name.endsWith("Release") || it.name.startsWith("assemble") && it.name.endsWith("Debug") }
+     .configureEach { it.dependsOn(':server:copyRelease') }
 
 dependencies {
   implementation 'androidx.documentfile:documentfile:1.0.1'

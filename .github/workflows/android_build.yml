@@ -46,6 +46,36 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      # 项目根自适应：兼容「代码在仓库根」(Scrcpy-Beta) 与「代码在 Scrcpy/ 子目录」(主仓库) 两种结构
+      - name: Detect Project Root
+        id: proj
+        run: |
+          if [ -f "Scrcpy/app/build.gradle" ]; then
+            echo "PROJ=Scrcpy" >> "$GITHUB_ENV"
+          elif [ -f "app/build.gradle" ]; then
+            echo "PROJ=." >> "$GITHUB_ENV"
+          else
+            echo "::error::app/build.gradle not found (neither Scrcpy/app nor app)"
+            exit 1
+          fi
+          echo "Project root: $PROJ"
+
+      - name: Install Android SDK Components
+        run: |
+          if command -v sdkmanager >/dev/null 2>&1; then
+            SDKM=sdkmanager
+          elif [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif [ -x "$ANDROID_HOME/tools/bin/sdkmanager" ]; then
+            SDKM="$ANDROID_HOME/tools/bin/sdkmanager"
+          else
+            echo "sdkmanager not found, relying on AGP auto-download"
+            exit 0
+          fi
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" "platforms;android-36" "build-tools;35.0.0" > /dev/null 2>&1 || echo "SDK components may already be installed"
+          echo "SDK ready"
+
       - name: Decode Keystore and Setup Properties
         run: |
           echo "MY_KEYSTORE_FILE=upload_keystore.jks" > keystore.properties
@@ -53,44 +83,45 @@ jobs:
           echo "MY_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> keystore.properties
           echo "MY_KEYSTORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> keystore.properties
 
-          mkdir -p Scrcpy/app
-          echo "${{ secrets.SIGNING_KEY }}" | base64 -d > Scrcpy/app/upload_keystore.jks
+          mkdir -p "$PROJ/app"
+          echo "${{ secrets.SIGNING_KEY }}" | base64 -d > "$PROJ/app/upload_keystore.jks"
 
       - name: Update Android Version
         id: version
         run: |
           INPUT_CODE="${{ inputs.app_version_code }}"
+          APP_GRADLE="$PROJ/app/build.gradle"
           if [ "$INPUT_CODE" = "0" ] || [ -z "$INPUT_CODE" ]; then
-            CURRENT_CODE=$(grep -oP 'versionCode\\s+\\K\\d+' Scrcpy/app/build.gradle | head -1)
+            CURRENT_CODE=$(grep -oP 'versionCode\s+\K\d+' "$APP_GRADLE" | head -1)
             NEW_CODE=$((CURRENT_CODE + 1))
           else
             NEW_CODE="$INPUT_CODE"
           fi
 
-          sed -i "s/versionCode [0-9]\\+/versionCode ${NEW_CODE}/" Scrcpy/app/build.gradle
-          sed -i 's/versionName ".*"/versionName "${{ inputs.app_version_name }}"/' Scrcpy/app/build.gradle
+          sed -i "s/versionCode [0-9]\+/versionCode ${NEW_CODE}/" "$APP_GRADLE"
+          sed -i "s/versionName \".*\"/versionName \"${{ inputs.app_version_name }}\"/" "$APP_GRADLE"
 
           echo "new_version_code=${NEW_CODE}" >> $GITHUB_OUTPUT
           echo "New versionCode=${NEW_CODE}"
           echo "New versionName=${{ inputs.app_version_name }}"
 
       - name: Grant execute permission for gradlew
-        run: chmod +x Scrcpy/gradlew
+        run: chmod +x "$PROJ/gradlew"
 
       - name: Build Server
         run: |
-          cd Scrcpy
+          cd "$PROJ"
           ./gradlew :server:copyRelease --no-daemon
 
       - name: Build App
         run: |
-          cd Scrcpy
+          cd "$PROJ"
           ./gradlew :app:assembleRelease --no-daemon
 
       - name: Rename APK
         run: |
           mkdir -p release
-          APK_PATH=$(find Scrcpy/app/build/outputs/apk/release -name "*.apk" | head -1)
+          APK_PATH=$(find "$PROJ/app/build/outputs/apk/release" -name "*.apk" | head -1)
           cp "$APK_PATH" release/Scrcpy.apk
           ls -l release
 
@@ -121,6 +152,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Scrcpy/app/build.gradle
+          git add "$PROJ/app/build.gradle"
           git commit -m "chore: bump versionCode to ${{ steps.version.outputs.new_version_code }}" || echo "no changes to commit"
           git push || echo "push failed, version bump not persisted"
