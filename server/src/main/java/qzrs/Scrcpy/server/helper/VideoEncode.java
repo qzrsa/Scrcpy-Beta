@@ -6,11 +6,13 @@ package qzrs.Scrcpy.server.helper;
 import android.graphics.Rect;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.system.ErrnoException;
+import android.util.Pair;
 import android.view.Surface;
 
 import java.io.IOException;
@@ -38,6 +40,9 @@ public final class VideoEncode {
 
   public static void init() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, IOException, ErrnoException {
     useH265 = Options.supportH265 && EncodecTools.isSupportH265();
+    // 创建Codec（内部按所选编码器的 VideoCapabilities 约束对齐 videoSize，v4.1 size-constraints 修复）
+    createEncodecFormat();
+    // 发包：编码器类型 + 已对齐的视频尺寸（与客户端协商字节一致）
     ByteBuffer byteBuffer = ByteBuffer.allocate(9);
     byteBuffer.put((byte) (useH265 ? 1 : 0));
     byteBuffer.putInt(Device.videoSize.first);
@@ -46,8 +51,7 @@ public final class VideoEncode {
     Server.writeVideo(byteBuffer);
     // 创建显示器
     display = SurfaceControl.createDisplay("scrcpy", Build.VERSION.SDK_INT < Build.VERSION_CODES.R || (Build.VERSION.SDK_INT == Build.VERSION_CODES.R && !"S".equals(Build.VERSION.CODENAME)));
-    // 创建Codec
-    createEncodecFormat();
+    // 启动编码
     startEncode();
   }
 
@@ -55,12 +59,17 @@ public final class VideoEncode {
     String codecMime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
     // 对齐 scrcpy v4.1：优先选用硬件编码器，避免部分机型默认编码器出绿屏/紫屏/卡顿；支持手动指定
     String encoderName = EncodecTools.selectEncoderName(codecMime, Options.videoEncoder);
+    MediaCodecInfo codecInfo;
     try {
+      codecInfo = encoderName != null ? resolveCodecInfo(encoderName, codecMime) : null;
       encedec = encoderName != null ? MediaCodec.createByCodecName(encoderName) : MediaCodec.createEncoderByType(codecMime);
     } catch (IOException e) {
       // 优选/指定编码器实例化失败，退回按类型默认编码器
       encedec = MediaCodec.createEncoderByType(codecMime);
+      codecInfo = resolveCodecInfo(null, codecMime);
     }
+    // 对齐 scrcpy v4.1 size-constraints 修复：按编码器真实能力约束 videoSize，避免 configure 失败
+    clampVideoSizeToEncoder(codecInfo);
     encodecFormat = new MediaFormat();
     encodecFormat.setString(MediaFormat.KEY_MIME, codecMime);
     encodecFormat.setInteger(MediaFormat.KEY_BIT_RATE, Options.maxVideoBit);
@@ -80,7 +89,15 @@ public final class VideoEncode {
     ControlPacket.sendVideoSizeEvent();
     encodecFormat.setInteger(MediaFormat.KEY_WIDTH, Device.videoSize.first);
     encodecFormat.setInteger(MediaFormat.KEY_HEIGHT, Device.videoSize.second);
-    encedec.configure(encodecFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+    try {
+      encedec.configure(encodecFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+    } catch (IllegalStateException e) {
+      // v4.1 兜底：约束对齐后仍 configure 失败，进一步回退到编码器支持尺寸重试一次，避免启动直接崩
+      applyEncoderFallbackSize();
+      encodecFormat.setInteger(MediaFormat.KEY_WIDTH, Device.videoSize.first);
+      encodecFormat.setInteger(MediaFormat.KEY_HEIGHT, Device.videoSize.second);
+      encedec.configure(encodecFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+    }
     // 绑定Display和Surface
     surface = encedec.createInputSurface();
     setDisplaySurface(display, surface);
@@ -155,6 +172,87 @@ public final class VideoEncode {
       encedec.setParameters(params);
       currentBitrate = clamped;
     } catch (IllegalStateException ignored) {
+    }
+  }
+
+  // ===== 以下为 v4.1 size-constraints 对齐辅助方法 =====
+
+  /** 按编码器名（或 mime）从 MediaCodecList 解析 MediaCodecInfo，兼容 Android 9（不依赖 MediaCodec.getCodecInfo()） */
+  private static MediaCodecInfo resolveCodecInfo(String encoderName, String mime) {
+    MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+    if (encoderName != null) {
+      for (MediaCodecInfo info : list.getCodecInfos()) {
+        if (info.isEncoder() && encoderName.equals(info.getName())) return info;
+      }
+    }
+    for (MediaCodecInfo info : list.getCodecInfos()) {
+      if (!info.isEncoder()) continue;
+      for (String type : info.getSupportedTypes()) {
+        if (type.equalsIgnoreCase(mime)) return info;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 对齐 scrcpy v4.1 size-constraints 修复：把 videoSize 对齐到所选编码器的 VideoCapabilities 约束
+   * ——width/height alignment 与支持的宽高上界，避免部分设备 configure 阶段因分辨率不被编码器支持而失败。
+   */
+  private static void clampVideoSizeToEncoder(MediaCodecInfo codecInfo) {
+    if (codecInfo == null) return;
+    try {
+      String mime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
+      MediaCodecInfo.VideoCapabilities vc = codecInfo.getCapabilitiesForType(mime).getVideoCapabilities();
+      if (vc == null) return;
+      int w = Device.videoSize.first;
+      int h = Device.videoSize.second;
+      int wa = vc.getWidthAlignment();
+      int ha = vc.getHeightAlignment();
+      if (wa > 1) w = ((w + wa / 2) / wa) * wa;
+      if (ha > 1) h = ((h + ha / 2) / ha) * ha;
+      int maxW = vc.getSupportedWidths().getUpper();
+      int maxH = vc.getSupportedHeights().getUpper();
+      // 等比缩回到支持的宽高上界内
+      while ((w > maxW || h > maxH) && w > wa && h > ha) {
+        if ((long) w * maxH > (long) h * maxW) w = (int) ((long) w * maxH / h);
+        else h = (int) ((long) h * maxW / w);
+        if (wa > 1) w = ((w + wa / 2) / wa) * wa;
+        if (ha > 1) h = ((h + ha / 2) / ha) * ha;
+      }
+      if (w > 0 && h > 0) Device.videoSize = new Pair<>(w, h);
+    } catch (Exception ignored) {
+      // 查询失败保持原值，不阻断启动
+    }
+  }
+
+  /**
+   * configure 失败兜底：取编码器支持的宽高上界（按 alignment 对齐）作为最终尺寸重试一次，
+   * 确保设备至少能启动编码（画面可能轻微拉伸，但服务不中断）。
+   */
+  private static void applyEncoderFallbackSize() {
+    try {
+      String mime = useH265 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
+      MediaCodecInfo codecInfo = resolveCodecInfo(encedec != null ? encedec.getName() : null, mime);
+      if (codecInfo == null) return;
+      MediaCodecInfo.VideoCapabilities vc = codecInfo.getCapabilitiesForType(mime).getVideoCapabilities();
+      if (vc == null) return;
+      int maxW = vc.getSupportedWidths().getUpper();
+      int maxH = vc.getSupportedHeights().getUpper();
+      int wa = vc.getWidthAlignment();
+      int ha = vc.getHeightAlignment();
+      int w = (wa > 1) ? (maxW / wa) * wa : maxW;
+      int h = (ha > 1) ? (maxH / ha) * ha : maxH;
+      int origW = Device.videoSize.first;
+      int origH = Device.videoSize.second;
+      // 不要超过原请求尺寸太多（避免码率爆炸），等比回退到原请求的 1.5 倍内
+      while ((w > origW * 1.5 || h > origH * 1.5) && w > wa && h > ha) {
+        if ((long) w * origH > (long) h * origW) w = (int) ((long) w * origH / h);
+        else h = (int) ((long) h * origW / w);
+        if (wa > 1) w = (w / wa) * wa;
+        if (ha > 1) h = (h / ha) * ha;
+      }
+      if (w > 0 && h > 0) Device.videoSize = new Pair<>(w, h);
+    } catch (Exception ignored) {
     }
   }
 

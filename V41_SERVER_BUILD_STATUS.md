@@ -66,7 +66,7 @@ cd D:\WorkBuddy\Scrcpy Updete\repo\Scrcpy
 |---|---|---|---|
 | 1 | 多指触控 Pointer index 修正 | ✅ 已完成 | 修复 `touchEvent` 误用 `pointer.id` 而非数组下标构造 `ACTION_POINTER_UP/DOWN`，多指手势不再错乱；对齐上游 scrcpy `Controller` 实现 |
 | 2 | 剪贴板跨版本稳定性加固 | ✅ 已完成 | 新增客户端主动拉取剪贴板命令（case 12）+ `getClipboardText/markClipboardSynced`，双向/初始同步更稳；`getText` 异常安全 |
-| 3 | 分辨率/编码器尺寸约束对齐 | ⬜ 待做 | 查 `VideoCapabilities` 对齐 videoSize，失败回退（对齐 4.1 size-constraints 修复） |
+| 3 | 分辨率/编码器尺寸约束对齐 | ✅ 已完成 | `VideoEncode` 新增 `resolveCodecInfo/clampVideoSizeToEncoder/applyEncoderFallbackSize`：按编码器 `VideoCapabilities`（alignment + 支持宽高上界）对齐 videoSize，`configure` 失败再兜底重试；用 `MediaCodecList` 解析兼容 Android 9（不用 API29+ 的 `getCodecInfo()`）；发包顺序调整为对齐后发送 |
 | 4 | Android 15/16 (API 35/36) 适配加固 | ⬜ 待做 | SurfaceControl/InputManager/Clipboard 在 API35/36 路径与守卫 |
 | 5 | VP8/VP9 编码兜底（4.1 头号特性） | ⬜ 待做 | 新增编解码器选择与协议协商 + 客户端解码 |
 
