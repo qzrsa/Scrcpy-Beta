@@ -42,7 +42,8 @@ public final class FakeContext extends MutableContextWrapper {
     return builder.build();
   }
 
-  // @Override to be added on SDK upgrade for Android 14
+  // Context.getDeviceId() 自 API 31 起存在，compileSdk 36 下应正确 override
+  @Override
   @SuppressWarnings("unused")
   public int getDeviceId() {
     return 0;

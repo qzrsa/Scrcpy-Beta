@@ -3,6 +3,7 @@
  */
 package qzrs.Scrcpy.server.wrappers;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.hardware.display.VirtualDisplay;
 import android.media.MediaCodec;
@@ -18,6 +19,7 @@ import qzrs.Scrcpy.server.entity.Device;
 import qzrs.Scrcpy.server.entity.DisplayInfo;
 import qzrs.Scrcpy.server.helper.FakeContext;
 
+@SuppressLint("PrivateApi")
 public final class DisplayManager {
   private static Object manager;
 

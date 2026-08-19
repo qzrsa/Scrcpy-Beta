@@ -12,7 +12,7 @@ import android.view.Surface;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-@SuppressLint("PrivateApi")
+@SuppressLint({"PrivateApi", "BlockedPrivateApi"})
 public final class SurfaceControl {
 
   private static Class<?> CLASS;

@@ -3,11 +3,13 @@
  */
 package qzrs.Scrcpy.server.wrappers;
 
+import android.annotation.SuppressLint;
 import android.view.InputEvent;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
+@SuppressLint("PrivateApi")
 public final class InputManager {
 
   public static final int INJECT_INPUT_EVENT_MODE_ASYNC = 0;
