@@ -16,10 +16,10 @@ if (keystorePropertiesFile.exists()) {
     def ksAlias = keystoreProperties.getProperty('MY_KEY_ALIAS')
     def ksPass = keystoreProperties.getProperty('MY_KEYSTORE_PASSWORD')
     def keyPass = keystoreProperties.getProperty('MY_KEY_PASSWORD')
-    // 仅在 keystore 文件存在且非空、且别名/密码均非空时才启用签名。
-    // CI 未配置签名 secrets 时会生成空占位 keystore + 空密码，此时跳过签名，产出 unsigned APK，
-    // 避免 :app:packageRelease 读取空 keystore 报 "Tag number over 30 is not supported"。
-    // 一旦仓库配齐 SIGNING_KEY/KEY_ALIAS/KEY_PASSWORD/STORE_PASSWORD 四个 secret，则自动改为签名包。
+    // 仅在 keystore 文件存在且非空、且别名/密码均非空时才启用 release 签名。
+    // CI 未配置签名 secrets 时会生成空占位 keystore + 空密码，此时 hasKeystore=false，
+    // buildTypes.release 会回退到 signingConfigs.debug，APK 仍可被安装测试。
+    // 一旦仓库配齐 SIGNING_KEY/KEY_ALIAS/KEY_PASSWORD/STORE_PASSWORD 四个 secret，则自动改为 release 签名包。
     def ksPath = (ksFile != null && !ksFile.trim().empty) ? rootProject.file(ksFile) : null
     if (ksPath != null && ksPath.exists() && ksPath.length() > 0
             && ksAlias != null && !ksAlias.trim().empty
@@ -48,7 +48,7 @@ android {
     applicationId "qzrs.Scrcpy"
     minSdk 21
     targetSdk 36
-    versionCode 2
+    versionCode 1
     versionName "2.0.X"
     ndk {
       abiFilters "arm64-v8a", "armeabi-v7a"
@@ -85,6 +85,10 @@ android {
       proguardFiles 'proguard-rules.pro'
       if (hasKeystore) {
         signingConfig signingConfigs.release
+      } else {
+        // CI 无 release 签名 secrets 时用 debug 签名兜底，APK 可被安装；
+        // 不会产出完全未签名的包导致 INSTALL_PARSE_FAILED_NO_CERTIFICATES。
+        signingConfig signingConfigs.debug
       }
     }
   }
