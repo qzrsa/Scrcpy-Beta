@@ -18,6 +18,9 @@ public class EncodecTools {
   private static void getEncodecList() {
     MediaCodecList mediaCodecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
     hevcEncodecList = new ArrayList<>();
+    avcEncodecList = new ArrayList<>();
+    vp8EncodecList = new ArrayList<>();
+    vp9EncodecList = new ArrayList<>();
     opusEncodecList = new ArrayList<>();
     for (MediaCodecInfo mediaCodecInfo : mediaCodecList.getCodecInfos()) {
       if (mediaCodecInfo.isEncoder()) {

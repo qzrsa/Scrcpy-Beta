@@ -70,8 +70,37 @@ cd D:\WorkBuddy\Scrcpy Updete\repo\Scrcpy
 | 4 | Android 15/16 (API 35/36) 适配加固 | ✅ 已完成 | 补全 lint 守卫：`SurfaceControl` 类级补 `BlockedPrivateApi`、`InputManager`/`DisplayManager` 补 `PrivateApi`、`FakeContext.getDeviceId()` 加 `@Override`（compileSdk 36 下 `Context.getDeviceId()` API31+ 已存在）；`ClipboardManager` 签名探测已覆盖 API34 全组合、API35/36 大概率沿用；`DisplayManager` 反射字段名稳定。**运行期反射路径（SurfaceControl 静态方法）需真机/模拟器在 API35/36 验证** |
 | 5 | VP8/VP9 编码兜底（4.1 头号特性） | ✅ 已完成 | 协商字节扩展为枚举（0=H264/1=H265/2=VP8/3=VP9）；服务端优先 H265→H264，二者不可用兜底 VP9/VP8（`EncodecTools.isSupportVP8/9/AVC`）；**补全 csd 发送**（首帧前发 csd-0，AVC 另发 csd-1），修复此前服务端不发 csd 导致客户端读取错位的协议缺口，VP8/VP9 无 csd 自动跳过；客户端 `ClientPlayer` 按枚举选解码 mime、`VideoDecode` 按类型设 csd、`DecodecTools.getVideoDecoder(int)` 支持四codec。**注意**：此改动同时修正了 H264/H265 既有 csd 协议，且 app 需内置 server 二进制（`app/src/main/res/raw/scrcpy_server`） |
 
-## 七、下一步
+## 七、真机运行验证（已完成）
 
-1. **（可选）真机/模拟器验证**：把 `server-release-unsigned.apk` 部署到安卓设备运行，确认编码器优选与协议握手在 Android 9–16 上正常（编译通过 ≠ 运行正确）。
-2. **v4.1 对齐 5 项已全部完成**（多指/剪贴板/尺寸约束/API35-36/VP8-VP9），下一步进入真机/模拟器运行验证（编译通过 ≠ 运行正确）。
+> 编译通过 ≠ 运行正确。5 项 v4.1 改动均编译通过后，已在**真实设备**上做运行验证，抓出并修复一个真机才暴露的运行时 NPE。
+
+**验证环境**
+- 设备：`SCG23`（Android 14 / API 34 / arm64-v8a），通过 `adb` over TCP/IP 连接。
+- 方法：把 server 以 `app_process -Djava.class.path=... qzrs.Scrcpy.server.Server serverPort=8886 ...` 拉起（与 app 实际启动方式一致），`adb forward` 打通隧道，用 Python 测试客户端连接 main+video 双 socket 触发 `VideoEncode.init()`，并 `logcat` 抓崩溃；app 侧安装 `app-debug.apk` 拉起 `MainActivity` 看是否崩溃。
+
+**首轮失败 —— 抓到真机 NPE（第 5 项引入的回归）**
+```
+java.lang.NullPointerException: ArrayList.add on a null object reference
+	at EncodecTools.getEncodecList(EncodecTools.java:30)
+	at EncodecTools.isSupportH265(EncodecTools.java:61)
+	at VideoEncode.init(VideoEncode.java:47)
+```
+- 根因：第 5 项新增 `avcEncodecList` / `vp8EncodecList` / `vp9EncodecList` 字段，但 `getEncodecList()` 只初始化了原来的 `hevcEncodecList` / `opusEncodecList`，三个新列表为 `null`，第 30 行 `avcEncodecList.add()` 直接 NPE。编译器不检查空指针，故编译通过、运行才炸。
+- 修复：在 `getEncodecList()` 顶部把 `avcEncodecList` / `vp8EncodecList` / `vp9EncodecList` 一并 `new ArrayList<>()`（commit 见下）。
+
+**修复后重跑 —— 全部通过 ✅**
+| 验证项 | 结果 |
+|---|---|
+| 编码器选择（协商字节） | `codecTypeId=1` → **H265(HEVC)**，H265 优先链路生效 |
+| 分辨率尺寸约束（v4.1 size-constraints） | `videoSize=608x1088`（maxSize=1080 + 16 对齐），约束对齐生效 |
+| 编码器实际产出 | 收到 **13 条视频消息**，首帧 payload 80 字节 = HEVC 的 csd-0(SPS/PPS)，`VideoEncode.init` 全链路跑通 |
+| 主 socket size-event | `03 00000260 00000440` = 608×1088，正确 |
+| app 启动 | `am start` 拉起 `MainActivity` 进程存活，**无 AndroidRuntime 崩溃 / 无 "has stopped"** |
+
+> 注：server 日志里的 `EOFException` 是测试客户端断开后的正常退出（非 bug）。Android 15/16（API35/36）的 SurfaceControl 反射路径仍**仅在 API35/36 真机/模拟器验证**，本机为 API34。
+
+## 八、下一步
+
+1. **API35/36 真机/模拟器专项验证**：当前设备是 API34，SurfaceControl 反射路径在 API35/36 仅做了 lint 守卫，建议找一台 Android 15/16 设备确认 `SurfaceControl` 反射仍可用（第 4 项标注的待验证点）。
+2. **端到端联机验证（可选）**：双机或单机回环跑一次"控制端 app ↔ 被控端 server"的完整投屏/触控/剪贴板，确认 VP8/VP9 兜底、多指、双向剪贴板在真实交互下无误。
 3. 后续改动继续提交并推送到 `qzrsa/Scrcpy-Beta`（复用 Git Data API 脚本）。
