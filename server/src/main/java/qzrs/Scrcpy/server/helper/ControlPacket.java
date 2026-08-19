@@ -109,5 +109,14 @@ public final class ControlPacket {
     Device.setClipboardText(text);
   }
 
+  /** 客户端主动请求拉取设备当前剪贴板（双向同步/初始同步）。读不到或空则不回包，避免无谓流量。 */
+  public static void handleClipboardRequest() {
+    String text = Device.getClipboardText();
+    if (text == null || text.isEmpty()) return;
+    // 同步本地去重基线，避免随后监听回调又把同一份内容当作变化再推一次
+    Device.markClipboardSynced(text);
+    sendClipboardEvent(text);
+  }
+
 }
 

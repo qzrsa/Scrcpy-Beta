@@ -57,6 +57,7 @@ public final class PointersState {
   public int update() {
     int i = 0;
     for (Pointer value : pointers.values()) {
+      value.index = i;
       pointerProperties[i].id = value.id;
       pointerCoords[i].x = value.x;
       pointerCoords[i].y = value.y;

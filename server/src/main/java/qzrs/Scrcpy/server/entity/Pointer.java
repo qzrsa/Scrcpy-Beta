@@ -7,6 +7,10 @@ public final class Pointer {
 
   public int id;
 
+  // 在 PointersState.update() 重建 pointerProperties 数组时被赋值为该指针在数组中的实际下标。
+  // 多指手势的 ACTION_POINTER_DOWN/UP 必须以“数组下标”而非本地 id 构造 action index，二者在指针复用后并不相等。
+  public int index;
+
   public float x;
 
   public float y;

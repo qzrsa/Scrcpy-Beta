@@ -58,8 +58,20 @@ cd D:\WorkBuddy\Scrcpy Updete\repo\Scrcpy
   - 父链：`96eccaaf` → `06ae3ecf` → `3f169588`。
 - 推送通道：本沙箱对 GitHub 的 **HTTPS git pack 上传被中间传输层确定性破坏**（每次 `remote unpack failed: index-pack failed`），且 token 缺 `admin:public_key`/`delete_repo`，无法用 SSH 或删脏仓库。改用 **GitHub Git Data API（REST JSON）** 绕过 pack 协议完成推送（脚本 `D:\WorkBuddy\Scrcpy Updete\repush_beta_root.py`）。
 
-## 六、下一步
+## 六、完整 v4.1 对齐进度清单（逐项推进）
+
+> 对照官方 scrcpy 4.1 变更（VP8/VP9、尺寸约束修复、剪贴板/稳定性等）+ 本仓库自实现缺口，拆成 5 项。逐项改 → 编译验证 → 提交 → 推 `qzrsa/Scrcpy-Beta`。
+
+| # | 项目 | 状态 | 说明 |
+|---|---|---|---|
+| 1 | 多指触控 Pointer index 修正 | ✅ 已完成 | 修复 `touchEvent` 误用 `pointer.id` 而非数组下标构造 `ACTION_POINTER_UP/DOWN`，多指手势不再错乱；对齐上游 scrcpy `Controller` 实现 |
+| 2 | 剪贴板跨版本稳定性加固 | ✅ 已完成 | 新增客户端主动拉取剪贴板命令（case 12）+ `getClipboardText/markClipboardSynced`，双向/初始同步更稳；`getText` 异常安全 |
+| 3 | 分辨率/编码器尺寸约束对齐 | ⬜ 待做 | 查 `VideoCapabilities` 对齐 videoSize，失败回退（对齐 4.1 size-constraints 修复） |
+| 4 | Android 15/16 (API 35/36) 适配加固 | ⬜ 待做 | SurfaceControl/InputManager/Clipboard 在 API35/36 路径与守卫 |
+| 5 | VP8/VP9 编码兜底（4.1 头号特性） | ⬜ 待做 | 新增编解码器选择与协议协商 + 客户端解码 |
+
+## 七、下一步
 
 1. **（可选）真机/模拟器验证**：把 `server-release-unsigned.apk` 部署到安卓设备运行，确认编码器优选与协议握手在 Android 9–16 上正常（编译通过 ≠ 运行正确）。
-2. **推进完整 v4.1 能力对齐**：输入/多指健壮性、Android 15/16 行为适配、剪贴板稳定性等（这些是"升级到 4.1"真正缺的部分）。
+2. 按进度清单第 2 项继续：剪贴板跨版本稳定性加固。
 3. 后续改动继续提交并推送到 `qzrsa/Scrcpy-Beta`（复用 Git Data API 脚本）。

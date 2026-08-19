@@ -192,6 +192,20 @@ public final class Device {
     ClipboardManager.setText(nowClipboardText);
   }
 
+  /** 读取设备当前剪贴板文本（供客户端主动拉取/初始同步用）。Android 10+ 后台读取依赖 shell 上下文，取不到返回 null。 */
+  public static String getClipboardText() {
+    try {
+      return ClipboardManager.getText();
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  /** 更新本地剪贴板去重基线，避免监听回调把同一份内容再当作变化推送一次。 */
+  public static void markClipboardSynced(String text) {
+    nowClipboardText = text;
+  }
+
   private static void setRotationListener() {
     WindowManager.registerRotationWatcher(new IRotationWatcher.Stub() {
       public void onRotationChanged(int rotation) {
@@ -215,11 +229,13 @@ public final class Device {
     pointer.y = y * displayInfo.height;
     int pointerCount = pointersState.update();
 
+    // 多指手势：ACTION_POINTER_DOWN/UP 的 action index 必须是该指针在 pointerProperties 数组中的“实际下标”，
+    // 而非本地 id。pointer.index 由 update() 写入，此时本指针仍在数组中（尚未移除），下标有效。
     if (action == MotionEvent.ACTION_UP) {
+      if (pointerCount > 1) action = MotionEvent.ACTION_POINTER_UP | (pointer.index << MotionEvent.ACTION_POINTER_INDEX_SHIFT);
       pointersState.remove(pointerId);
-      if (pointerCount > 1) action = MotionEvent.ACTION_POINTER_UP | (pointer.id << MotionEvent.ACTION_POINTER_INDEX_SHIFT);
     } else if (action == MotionEvent.ACTION_DOWN) {
-      if (pointerCount > 1) action = MotionEvent.ACTION_POINTER_DOWN | (pointer.id << MotionEvent.ACTION_POINTER_INDEX_SHIFT);
+      if (pointerCount > 1) action = MotionEvent.ACTION_POINTER_DOWN | (pointer.index << MotionEvent.ACTION_POINTER_INDEX_SHIFT);
     }
     MotionEvent event = MotionEvent.obtain(pointer.downTime, pointer.downTime + offsetTime, action, pointerCount, pointersState.pointerProperties, pointersState.pointerCoords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
     injectEvent(event);

@@ -216,6 +216,10 @@ public final class Server {
             // 自适应码率：客户端请求把视频码率调整到指定 bps
             VideoEncode.requestBitrate(mainInputStream.readInt());
             break;
+          case 12:
+            // 客户端主动拉取设备当前剪贴板（双向同步/初始同步）
+            ControlPacket.handleClipboardRequest();
+            break;
         }
       }
     } catch (Exception e) {
